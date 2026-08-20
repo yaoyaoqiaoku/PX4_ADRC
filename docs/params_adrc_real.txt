@@ -1,0 +1,76 @@
+# ADRC 真机保守起点参数（66cm 轴距 / 3.5kg / 14寸桨 / 6S）
+# v4（2026-08-14）：三阶增广 ESO + 分配器饱和反馈（需编译 v4 固件）
+# 注意：v4 增广 ESO 触发条件为 3*ESO_W*TAU > 1（TAU=0.02 时 ESO_W 须 ≥ 20，
+#       否则自动回退到 v3 的输入滞后滤波，行为不变）。
+# 用法：在 QGC MAVLink Console 或飞控终端逐行粘贴，最后 param save
+# 安全提示：每轮只改一个参数，低空悬停验证后再继续
+
+# ---- 第 1 步：b0 用物理估算值 ----
+param set ADRC_ROLL_B0 90
+param set ADRC_PITCH_B0 90
+param set ADRC_YAW_B0 8
+
+# ---- 第 2 步：保守带宽（低于 2.4~3Hz 谐振）----
+param set ADRC_ROLL_CW 4
+param set ADRC_PITCH_CW 4
+param set ADRC_YAW_CW 3
+param set ADRC_ROLL_ESO_W 10
+param set ADRC_PITCH_ESO_W 10
+param set ADRC_YAW_ESO_W 8
+
+# ---- 第 3 步：结构改进（滤波 + 执行器延时补偿）----
+param set ADRC_ROLL_FLT 30
+param set ADRC_PITCH_FLT 30
+param set ADRC_YAW_FLT 20
+param set ADRC_ROLL_TAU 0.02
+param set ADRC_PITCH_TAU 0.02
+param set ADRC_YAW_TAU 0.01
+
+# z3 自动限幅（0 = 2*|b0|），保护性默认，无需改
+# param set ADRC_ROLL_Z3MAX 0
+# param set ADRC_PITCH_Z3MAX 0
+# param set ADRC_YAW_Z3MAX 0
+
+# ---- 第 4 步：仍然晃/振荡时的关键新旋钮（优先于继续降 CW/ESO_W）----
+# 4.0 部分补偿：gamma<1 直接降低 z3 补偿强度，是 FMT/Jiachi Zou 论文
+#      给出的真机振荡标准解法。先试 0.7，若还晃降到 0.5，稳了再回 0.8~0.9。
+#      代价：抗扰/抗风略降，悬停平滑度会明显变好。
+param set ADRC_ROLL_GAMMA 0.7
+param set ADRC_PITCH_GAMMA 0.7
+param set ADRC_YAW_GAMMA 0.6
+
+# 4.0b 打杆震荡（一动摇杆就晃）：设定值平滑（贫民版 TD）
+# 平滑打杆阶跃，避免激励机架柔性模态。5~10 Hz 起步。
+# param set ADRC_ROLL_SPS 8
+# param set ADRC_PITCH_SPS 8
+# param set ADRC_YAW_SPS 6
+
+# ---- 第 5 步：稳住之后逐步放开（每项悬停确认）----
+# 4.1 ESO_W 上限试探：12 -> 15 -> 18（出现抖动就退回）
+# param set ADRC_ROLL_ESO_W 15
+# param set ADRC_PITCH_ESO_W 15
+# param set ADRC_YAW_ESO_W 12
+
+# 4.2 CW 上限试探：5 -> 6 -> 8
+# param set ADRC_ROLL_CW 6
+# param set ADRC_PITCH_CW 6
+# param set ADRC_YAW_CW 5
+
+# 4.3 跟手前馈（不拉高 CW）
+# param set ADRC_ROLL_FF 0.4
+# param set ADRC_PITCH_FF 0.4
+# param set ADRC_YAW_FF 0.3
+
+# 4.4 静差积分（悬停有漂移时）
+# param set ADRC_ROLL_KI 0.2
+# param set ADRC_PITCH_KI 0.2
+# param set ADRC_YAW_KI 0.1
+
+# ---- 可选：谐振仍然顽固时，用日志 FFT 峰值设置 notch ----
+# 例：2.8Hz 谐振
+# param set ADRC_ROLL_NF 2.8
+# param set ADRC_ROLL_NBW 1.0
+# param set ADRC_PITCH_NF 2.8
+# param set ADRC_PITCH_NBW 1.0
+
+param save

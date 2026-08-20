@@ -1,0 +1,12 @@
+menuconfig MODULES_ADRC_RATE_CONTROL
+	bool "adrc_rate_control"
+	default n
+	---help---
+		Enable support for adrc_rate_control
+
+menuconfig USER_ADRC_RATE_CONTROL
+	bool "adrc_rate_control running as userspace module"
+	default n
+	depends on BOARD_PROTECTED && MODULES_ADRC_RATE_CONTROL
+	---help---
+		Put adrc_rate_control in userspace memory
