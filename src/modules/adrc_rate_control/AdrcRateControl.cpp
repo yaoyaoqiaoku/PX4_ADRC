@@ -79,13 +79,56 @@ AdrcRateControl::init()
 void
 AdrcRateControl::parameters_updated()
 {
+	/* Runtime mode validation (keep-last-valid, mirrors mc_adrc_control's
+	 * MC_ADRC_EN handling). ADRC_ESO_MODE and ADRC_CTRL_LAW may be set to an
+	 * invalid value at runtime; never silently switch to another controller
+	 * branch mid-flight — keep the last valid mode and warn once. */
+	int eso_mode = _param_adrc_eso_mode.get();
+
+	if (eso_mode != 0 && eso_mode != 1) {
+		if (!_invalid_eso_mode_warned) {
+			PX4_WARN("invalid ADRC_ESO_MODE=%d, keeping mode %d (valid: 0=classic fal-ESO, 1=linear ESO)",
+				 eso_mode, _last_eso_mode);
+			_invalid_eso_mode_warned = true;
+		}
+
+		eso_mode = _last_eso_mode;
+
+	} else {
+		_invalid_eso_mode_warned = false;
+	}
+
+	int ctrl_law = _param_adrc_ctrl_law.get();
+
+	if (ctrl_law != 1 && ctrl_law != 2) {
+		if (!_invalid_ctrl_law_warned) {
+			PX4_WARN("invalid ADRC_CTRL_LAW=%d, keeping law %d (valid: 1=nonlinear NLSEF, 2=linear)",
+				 ctrl_law, _last_ctrl_law);
+			_invalid_ctrl_law_warned = true;
+		}
+
+		ctrl_law = _last_ctrl_law;
+
+	} else {
+		_invalid_ctrl_law_warned = false;
+	}
+
+	/* legal switch of ESO structure or control law: flag a state reset for
+	 * Run() so the new structure starts from clean observer states */
+	if (eso_mode != _last_eso_mode || ctrl_law != _last_ctrl_law) {
+		_mode_changed = true;
+	}
+
+	_last_eso_mode = eso_mode;
+	_last_ctrl_law = ctrl_law;
+
 	_acro_rate_max = Vector3f(radians(_param_mc_acro_r_max.get()), radians(_param_mc_acro_p_max.get()),
 				  radians(_param_mc_acro_y_max.get()));
 
-	auto configure = [](Adrc &adrc, int law, int eso_mode, float eso_w, float ctrl_w,
-	const float p[11]) {
+	auto configure = [](Adrc &adrc, int law, int mode, float eso_w, float ctrl_w,
+	const float p[13]) {
 		adrc.setControlLaw(law);
-		adrc.setEsoMode(eso_mode);
+		adrc.setEsoMode(mode);
 		adrc.setObserverBandwidth(eso_w);
 		adrc.setControllerBandwidth(ctrl_w);
 		adrc.setFeedbackFilter(p[0]);
@@ -98,35 +141,40 @@ AdrcRateControl::parameters_updated()
 		adrc.setGamma(p[8]);
 		adrc.setSetpointFilter(p[9]);
 		adrc.setIntegratorLimit(p[10]);
+		adrc.setLambdaZ3(p[11]);
+		adrc.setZ3AdaptiveFilter(p[12]);
 	};
 
-	const float roll_hardening[11] = {
+	const float roll_hardening[13] = {
 		_param_adrc_roll_flt.get(), _param_adrc_roll_nf.get(), _param_adrc_roll_nbw.get(),
 		_param_adrc_roll_tau.get(), _param_adrc_roll_z3max.get(), _param_adrc_roll_ff.get(),
 		_param_adrc_roll_ki.get(), _param_adrc_roll_ramp.get(),
 		_param_adrc_roll_gamma.get(), _param_adrc_roll_sps.get(),
-		_param_adrc_roll_ilim.get()
+		_param_adrc_roll_ilim.get(), _param_adrc_roll_lz3.get(),
+		_param_adrc_roll_af.get()
 	};
-	const float pitch_hardening[11] = {
+	const float pitch_hardening[13] = {
 		_param_adrc_pitch_flt.get(), _param_adrc_pitch_nf.get(), _param_adrc_pitch_nbw.get(),
 		_param_adrc_pitch_tau.get(), _param_adrc_pitch_z3max.get(), _param_adrc_pitch_ff.get(),
 		_param_adrc_pitch_ki.get(), _param_adrc_pitch_ramp.get(),
 		_param_adrc_pitch_gamma.get(), _param_adrc_pitch_sps.get(),
-		_param_adrc_pitch_ilim.get()
+		_param_adrc_pitch_ilim.get(), _param_adrc_pitch_lz3.get(),
+		_param_adrc_pitch_af.get()
 	};
-	const float yaw_hardening[11] = {
+	const float yaw_hardening[13] = {
 		_param_adrc_yaw_flt.get(), _param_adrc_yaw_nf.get(), _param_adrc_yaw_nbw.get(),
 		_param_adrc_yaw_tau.get(), _param_adrc_yaw_z3max.get(), _param_adrc_yaw_ff.get(),
 		_param_adrc_yaw_ki.get(), _param_adrc_yaw_ramp.get(),
 		_param_adrc_yaw_gamma.get(), _param_adrc_yaw_sps.get(),
-		_param_adrc_yaw_ilim.get()
+		_param_adrc_yaw_ilim.get(), _param_adrc_yaw_lz3.get(),
+		_param_adrc_yaw_af.get()
 	};
 
-	configure(_adrc[0], _param_adrc_ctrl_law.get(), _param_adrc_eso_mode.get(),
+	configure(_adrc[0], ctrl_law, eso_mode,
 		  _param_adrc_roll_eso_w.get(), _param_adrc_roll_cw.get(), roll_hardening);
-	configure(_adrc[1], _param_adrc_ctrl_law.get(), _param_adrc_eso_mode.get(),
+	configure(_adrc[1], ctrl_law, eso_mode,
 		  _param_adrc_pitch_eso_w.get(), _param_adrc_pitch_cw.get(), pitch_hardening);
-	configure(_adrc[2], _param_adrc_ctrl_law.get(), _param_adrc_eso_mode.get(),
+	configure(_adrc[2], ctrl_law, eso_mode,
 		  _param_adrc_yaw_eso_w.get(), _param_adrc_yaw_cw.get(), yaw_hardening);
 
 	_adrc[0].setParameters(
@@ -192,7 +240,6 @@ AdrcRateControl::Run()
 
 			if (_vehicle_land_detected_sub.copy(&vehicle_land_detected)) {
 				_landed = vehicle_land_detected.landed;
-				_maybe_landed = vehicle_land_detected.maybe_landed;
 			}
 		}
 
@@ -274,15 +321,29 @@ AdrcRateControl::Run()
 
 			Vector3f att_control;
 
+			/* ESO mode / control law was legally switched via param update:
+			 * reset every axis so the new structure starts from clean observer
+			 * states (z1 seeded with current rates) instead of stale ones */
+			if (_mode_changed) {
+				_mode_changed = false;
+
+				for (int i = 0; i < 3; i++) {
+					_adrc[i].reset(rates(i));
+				}
+			}
+
 			for (int i = 0; i < 3; i++) {
 				if (!armed) {
 					/* keep states reset while disarmed */
 					_adrc[i].reset(rates(i));
 
-				} else if (_landed || _maybe_landed) {
+				} else if (_landed) {
 					/* on the ground with motors running: only zero the disturbance
 					 * estimate (mirrors the stock integrator reset), keep TD and
-					 * velocity states so the controller can act during takeoff */
+					 * velocity states so the controller can act during takeoff.
+					 * Deliberately NOT on maybe_landed: a brief in-flight
+					 * misdetection (e.g. low-throttle dip) would zero z3 and lose
+					 * the disturbance compensation, causing a torque jump */
 					_adrc[i].resetIntegral();
 				}
 

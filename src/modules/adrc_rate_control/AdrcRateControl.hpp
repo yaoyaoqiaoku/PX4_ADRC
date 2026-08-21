@@ -118,8 +118,17 @@ private:
 	vehicle_status_s _vehicle_status{};
 
 	bool _landed{true};
-	bool _maybe_landed{true};
 	bool _armed_prev{false};
+
+	/* runtime mode validation (keep-last-valid, mirrors mc_adrc_control):
+	 * ADRC_ESO_MODE / ADRC_CTRL_LAW are validated against their legal sets on
+	 * every parameter update; an invalid value keeps the last valid mode and
+	 * warns once instead of silently switching branches mid-flight. */
+	int  _last_eso_mode{1};		///< last valid ADRC_ESO_MODE (0=classic, 1=LADRC)
+	int  _last_ctrl_law{2};		///< last valid ADRC_CTRL_LAW (1=nonlinear NLSEF, 2=linear)
+	bool _invalid_eso_mode_warned{false};
+	bool _invalid_ctrl_law_warned{false};
+	bool _mode_changed{false};	///< ESO mode / control law changed via param update (reset states in Run)
 
 	hrt_abstime _last_run{0};
 
@@ -167,6 +176,8 @@ private:
 		(ParamFloat<px4::params::ADRC_ROLL_RAMP>) _param_adrc_roll_ramp,
 		(ParamFloat<px4::params::ADRC_ROLL_GAMMA>) _param_adrc_roll_gamma,
 		(ParamFloat<px4::params::ADRC_ROLL_SPS>) _param_adrc_roll_sps,
+		(ParamFloat<px4::params::ADRC_ROLL_LZ3>) _param_adrc_roll_lz3,
+		(ParamFloat<px4::params::ADRC_ROLL_AF>) _param_adrc_roll_af,
 		(ParamFloat<px4::params::ADRC_ROLL_ILIM>) _param_adrc_roll_ilim,
 
 		(ParamFloat<px4::params::ADRC_PITCH_R>) _param_adrc_pitch_r,
@@ -193,6 +204,8 @@ private:
 		(ParamFloat<px4::params::ADRC_PITCH_RAMP>) _param_adrc_pitch_ramp,
 		(ParamFloat<px4::params::ADRC_PITCH_GAMMA>) _param_adrc_pitch_gamma,
 		(ParamFloat<px4::params::ADRC_PITCH_SPS>) _param_adrc_pitch_sps,
+		(ParamFloat<px4::params::ADRC_PITCH_LZ3>) _param_adrc_pitch_lz3,
+		(ParamFloat<px4::params::ADRC_PITCH_AF>) _param_adrc_pitch_af,
 		(ParamFloat<px4::params::ADRC_PITCH_ILIM>) _param_adrc_pitch_ilim,
 
 		(ParamFloat<px4::params::ADRC_YAW_R>) _param_adrc_yaw_r,
@@ -219,6 +232,8 @@ private:
 		(ParamFloat<px4::params::ADRC_YAW_RAMP>) _param_adrc_yaw_ramp,
 		(ParamFloat<px4::params::ADRC_YAW_GAMMA>) _param_adrc_yaw_gamma,
 		(ParamFloat<px4::params::ADRC_YAW_SPS>) _param_adrc_yaw_sps,
+		(ParamFloat<px4::params::ADRC_YAW_LZ3>) _param_adrc_yaw_lz3,
+		(ParamFloat<px4::params::ADRC_YAW_AF>) _param_adrc_yaw_af,
 		(ParamFloat<px4::params::ADRC_YAW_ILIM>) _param_adrc_yaw_ilim,
 
 		(ParamFloat<px4::params::MC_ACRO_R_MAX>) _param_mc_acro_r_max,

@@ -39,10 +39,17 @@
 
 #include <cmath>
 #include <mathlib/math/Limits.hpp>
+#include <px4_platform_common/defines.h>
 
 namespace
 {
 constexpr float kPiF = 3.14159265358979323846f;
+
+/* Adaptive disturbance-estimate filter constants */
+constexpr float Z3AF_ENV_RATE = 1.5f;
+constexpr float Z3AF_FILT_FAST = 30.0f;
+constexpr float Z3AF_FILT_MIN = 0.5f;
+
 }
 
 void
@@ -154,6 +161,18 @@ Adrc::setSetpointFilter(float hz)
 }
 
 void
+Adrc::setLambdaZ3(float lambda)
+{
+	_lambda_z3 = fmaxf(lambda, 0.0f);
+}
+
+void
+Adrc::setZ3AdaptiveFilter(float thresh)
+{
+	_z3_af_thresh = fmaxf(thresh, 0.0f);
+}
+
+void
 Adrc::setAppliedTorque(float u_applied)
 {
 	/* Override the ESO input with the torque the control allocator actually
@@ -173,6 +192,14 @@ Adrc::setSaturationStatus(bool saturated_positive, bool saturated_negative)
 float
 Adrc::update(float setpoint, float feedback, float dt)
 {
+	/* NaN guard: if the setpoint or feedback is not finite (sensor glitch,
+	 * bad parameter), hold the last output and do not update the ESO with
+	 * garbage — a NaN would propagate through z1/z3 to u and permanently
+	 * corrupt the observer until the next reset. */
+	if (!PX4_ISFINITE(setpoint) || !PX4_ISFINITE(feedback) || !PX4_ISFINITE(dt)) {
+		return _u;
+	}
+
 	/* optional setpoint smoothing ("poor man's TD"): a 1st-order low-pass on the
 	 * rate reference arranges a smooth transition for stick steps, so the loop
 	 * does not hammer the airframe's flexible modes. The smoothed reference is
@@ -215,13 +242,16 @@ Adrc::update(float setpoint, float feedback, float dt)
 			updateEsoLinear(y, dt);
 		}
 
+		updateZ3AdaptiveFilter(dt);
+
 		_e1 = sp - _z1;
 		_e2 = 0.0f;
 		_v1 = 0.0f;
 		_v2 = 0.0f;
 
+		const float z3_comp = (_z3_af_thresh > 0.0f) ? _z3_filt : _z3;
 		const float u0 = _ctrl_w * _e1 + _ff * sp + _ki * _integ;
-		const float u_new = (_b0 > 1e-6f) ? (u0 - _gamma * _z3) / _b0 : u0;
+		const float u_new = (_b0 > 1e-6f) ? (u0 - _gamma * z3_comp) / _b0 : u0;
 
 		/* anti-windup integration: never integrate into an output-clamped or
 		 * control-allocator-saturated direction (mirrors the stock PID) */
@@ -260,9 +290,12 @@ Adrc::update(float setpoint, float feedback, float dt)
 	/* 2. extended state observer (uses the clamped control applied last cycle) */
 	updateEso(y, dt);
 
+	updateZ3AdaptiveFilter(dt);
+
 	/* 3. nonlinear state error feedback + disturbance compensation */
+	const float z3_comp_nl = (_z3_af_thresh > 0.0f) ? _z3_filt : _z3;
 	const float u0 = updateNlsef();
-	const float u_new = (_b0 > FLT_EPSILON) ? (u0 - _gamma * _z3) / _b0 : u0;
+	const float u_new = (_b0 > FLT_EPSILON) ? (u0 - _gamma * z3_comp_nl) / _b0 : u0;
 
 	/* clamp, slew-limit and feed the actual control back to the ESO next cycle */
 	_u = applyLimits(u_new, dt);
@@ -296,6 +329,9 @@ Adrc::reset(float feedback)
 	_z3_raw = 0.0f;
 	_sat_pos = false;
 	_sat_neg = false;
+	_z3_max_env = 0.0f;
+	_z3_min_env = 0.0f;
+	_z3_filt = 0.0f;
 	_notch_x1 = _notch_x2 = _notch_y1 = _notch_y2 = 0.0f;
 	_e1 = 0.0f;
 	_e2 = 0.0f;
@@ -313,6 +349,10 @@ Adrc::resetIntegral()
 	/* the input-lag ESO input state too: a stale value would bias the v3 path
 	 * on the next arming cycle (in augmented mode _u_eso mirrors z2) */
 	_u_eso = 0.0f;
+	/* the adaptive filter state too: a stale _z3_filt would feed the control
+	 * law (z3_comp = _z3_filt when AF active) with an old disturbance value
+	 * after landing, causing a takeoff jump */
+	_z3_filt = 0.0f;
 }
 
 void
@@ -327,13 +367,15 @@ void
 Adrc::updateEso(float y, float h)
 {
 	const float u_eso = getEsoInput(h);
+	const float max_gain = fmaxf(_eso_beta03, fmaxf(_eso_beta02, _eso_beta01));
+	const float dt_eso = math::min(h, 2.0f / fmaxf(max_gain, 1.0f));
 	const float e = _z1 - y;
 	const float fe = fal(e, 0.5f, _delta);
 	const float fe1 = fal(e, 0.25f, _delta);
 
-	_z1 += h * (_z2 - _eso_beta01 * e);
-	_z2 += h * (_z3 - _eso_beta02 * fe + _b0 * u_eso);
-	_z3 += h * (-_eso_beta03 * fe1);
+	_z1 += dt_eso * (_z2 - _eso_beta01 * e);
+	_z2 += dt_eso * (_z3 - _eso_beta02 * fe + _b0 * u_eso);
+	_z3 += dt_eso * (-_eso_beta03 * fe1 - _lambda_z3 * _z3);
 
 	saturateZ3();
 }
@@ -342,6 +384,7 @@ void
 Adrc::updateEsoLinear(float y, float h)
 {
 	const float u_eso = getEsoInput(h);
+	const float dt_eso = math::min(h, 1.0f / fmaxf(_eso_w, 1.0f));
 
 	/* linear 2-state ESO gains are derived from the observer bandwidth only */
 	const float beta01 = 2.0f * _eso_w;
@@ -349,8 +392,8 @@ Adrc::updateEsoLinear(float y, float h)
 	const float e = _z1 - y;
 
 	/* z1 = angular rate estimate, z3 = total disturbance estimate */
-	_z1 += h * (_z3 - beta01 * e + _b0 * u_eso);
-	_z3 += h * (-beta02 * e);
+	_z1 += dt_eso * (_z3 - beta01 * e + _b0 * u_eso);
+	_z3 += dt_eso * (-beta02 * e - _lambda_z3 * _z3);
 
 	saturateZ3();
 }
@@ -406,6 +449,7 @@ Adrc::updateEsoLinearAugmented(float y, float h)
 	 * pre-clamped and the control-allocator feedback feeding the achieved
 	 * torque, the closed-loop effect of this nonlinearity is small). */
 	const float e = _z1 - y;
+	const float dt_eso = math::min(h, 1.0f / fmaxf(_eso_w, 1.0f));
 
 	const float inv_tau = 1.0f / _tau;
 	const float w = _eso_w;
@@ -422,11 +466,11 @@ Adrc::updateEsoLinearAugmented(float y, float h)
 		/* pinned at the rail, being driven further: hold */
 
 	} else {
-		_z2 += h * z2_dot;
+		_z2 += dt_eso * z2_dot;
 	}
 
-	_z1 += h * (_b0 * _z2 + _z3 - beta1 * e);
-	_z3 += h * (-beta3 * e);
+	_z1 += dt_eso * (_b0 * _z2 + _z3 - beta1 * e);
+	_z3 += dt_eso * (-beta3 * e - _lambda_z3 * _z3);
 
 	/* safety clamp (conditional integration above should keep z2 in range) */
 	_z2 = math::constrain(_z2, -1.0f, 1.0f);
@@ -447,7 +491,8 @@ Adrc::getEsoInput(float h)
 	 * the plant sees the torque only after tau, so feed the ESO the lagged
 	 * command instead of the instantaneous one */
 	if (_tau > 0.0f) {
-		const float alpha = h / (h + _tau);
+		/* exact (ZOH) discretization: alpha = 1 - exp(-h/tau) */
+		const float alpha = 1.0f - expf(-h / _tau);
 		_u_eso += alpha * (_u_eso_in - _u_eso);
 		u_eso = _u_eso;
 	}
@@ -484,6 +529,49 @@ Adrc::applyLimits(float u_new, float dt)
 
 	_u_prev = u;
 	return u;
+}
+
+void
+Adrc::updateZ3AdaptiveFilter(float dt)
+{
+	if (_z3_af_thresh <= 0.0f) {
+		_z3_filt = _z3;
+		return;
+	}
+
+	const float alpha_env = 1.0f - expf(-dt * Z3AF_ENV_RATE);
+
+	if (_z3 > _z3_max_env) {
+		_z3_max_env = _z3;
+	} else {
+		_z3_max_env += alpha_env * (_z3 - _z3_max_env);
+	}
+
+	if (_z3 < _z3_min_env) {
+		_z3_min_env = _z3;
+	} else {
+		_z3_min_env += alpha_env * (_z3 - _z3_min_env);
+	}
+
+	const float width = _z3_max_env - _z3_min_env;
+	float f_af;
+
+	if (width < _z3_af_thresh) {
+		f_af = Z3AF_FILT_FAST;
+	} else {
+		const float r = _z3_af_thresh / width;
+		f_af = math::max(Z3AF_FILT_FAST * r * r * r, Z3AF_FILT_MIN);
+	}
+
+	const float alpha_af = 1.0f - expf(-dt * f_af);
+	_z3_filt += alpha_af * (_z3 - _z3_filt);
+
+	/* defense in depth: clamp the filtered disturbance to the same physical
+	 * limit as z3 (configured Z3MAX, or auto 2*|b0|). A transient overshoot
+	 * of the low-pass (large alpha_af on a z3 step) must never feed the
+	 * control law with a disturbance estimate beyond the actuator's reach. */
+	const float limit = (_z3_max > 0.0f) ? _z3_max : 2.0f * fabsf(_b0);
+	_z3_filt = math::constrain(_z3_filt, -limit, limit);
 }
 
 void

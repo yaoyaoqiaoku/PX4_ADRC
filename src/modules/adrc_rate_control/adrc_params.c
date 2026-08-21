@@ -284,6 +284,30 @@ PARAM_DEFINE_FLOAT(ADRC_ROLL_GAMMA, 1.0f);
 PARAM_DEFINE_FLOAT(ADRC_ROLL_SPS, 0.0f);
 
 /**
+ * Roll disturbance-estimate leaky integration rate
+ *
+ * @unit 1/s
+ * @min 0.0
+ * @max 20.0
+ * @decimal 1
+ * @increment 0.5
+ * @group ADRC Rate Control
+ */
+PARAM_DEFINE_FLOAT(ADRC_ROLL_LZ3, 0.0f);
+
+/**
+ * Roll adaptive disturbance-estimate filter threshold
+ *
+ * @unit rad/s^2
+ * @min 0.0
+ * @max 50.0
+ * @decimal 1
+ * @increment 1
+ * @group ADRC Rate Control
+ */
+PARAM_DEFINE_FLOAT(ADRC_ROLL_AF, 0.0f);
+
+/**
  * Pitch LADRC observer bandwidth w_o [rad/s]
  *
  * [CORE] See ADRC_ROLL_ESO_W for tuning guidance.
@@ -443,6 +467,30 @@ PARAM_DEFINE_FLOAT(ADRC_PITCH_GAMMA, 1.0f);
 PARAM_DEFINE_FLOAT(ADRC_PITCH_SPS, 0.0f);
 
 /**
+ * Pitch disturbance-estimate leaky integration rate
+ *
+ * @unit 1/s
+ * @min 0.0
+ * @max 20.0
+ * @decimal 1
+ * @increment 0.5
+ * @group ADRC Rate Control
+ */
+PARAM_DEFINE_FLOAT(ADRC_PITCH_LZ3, 0.0f);
+
+/**
+ * Pitch adaptive disturbance-estimate filter threshold
+ *
+ * @unit rad/s^2
+ * @min 0.0
+ * @max 50.0
+ * @decimal 1
+ * @increment 1
+ * @group ADRC Rate Control
+ */
+PARAM_DEFINE_FLOAT(ADRC_PITCH_AF, 0.0f);
+
+/**
  * Yaw LADRC observer bandwidth w_o [rad/s]
  *
  * [CORE] See ADRC_ROLL_ESO_W for tuning guidance.
@@ -600,6 +648,30 @@ PARAM_DEFINE_FLOAT(ADRC_YAW_GAMMA, 1.0f);
  * @group ADRC Rate Control
  */
 PARAM_DEFINE_FLOAT(ADRC_YAW_SPS, 0.0f);
+
+/**
+ * Yaw disturbance-estimate leaky integration rate
+ *
+ * @unit 1/s
+ * @min 0.0
+ * @max 20.0
+ * @decimal 1
+ * @increment 0.5
+ * @group ADRC Rate Control
+ */
+PARAM_DEFINE_FLOAT(ADRC_YAW_LZ3, 0.0f);
+
+/**
+ * Yaw adaptive disturbance-estimate filter threshold
+ *
+ * @unit rad/s^2
+ * @min 0.0
+ * @max 50.0
+ * @decimal 1
+ * @increment 1
+ * @group ADRC Rate Control
+ */
+PARAM_DEFINE_FLOAT(ADRC_YAW_AF, 0.0f);
 
 /**
  * Roll ADRC TD fast tracking factor

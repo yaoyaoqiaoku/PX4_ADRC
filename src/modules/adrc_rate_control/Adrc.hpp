@@ -135,6 +135,12 @@ public:
 	/** Rate-setpoint low-pass cutoff [Hz] (0 = none). */
 	void setSetpointFilter(float hz);
 
+	/** Leaky-integration decay rate on z3 [1/s]; 0 = standard LADRC. */
+	void setLambdaZ3(float lambda);
+
+	/** Adaptive z3 filter envelope threshold [rad/s²]; 0 = off. */
+	void setZ3AdaptiveFilter(float thresh);
+
 	/** Torque actually achieved by the control allocator for this axis
 	 *  (command minus unallocated). Overrides the ESO input for this cycle so
 	 *  actuator saturation is not estimated as disturbance (anti-windup).
@@ -204,6 +210,9 @@ private:
 	/* output clamping + slew-rate limiting */
 	float applyLimits(float u_new, float dt);
 
+	/* adaptive z3 filter */
+	void updateZ3AdaptiveFilter(float dt);
+
 	/* biquad notch support */
 	void updateNotch(float dt);
 	float applyNotch(float x);
@@ -241,6 +250,13 @@ private:
 	float _gamma{1.0f};
 	float _sp_flt_hz{0.0f};
 	float _ilim_ratio{0.5f};	/* max |integral| = ratio / ki */
+	float _lambda_z3{0.0f};	/* leaky-integration decay on z3 [1/s] */
+
+	/* adaptive z3 filter */
+	float _z3_af_thresh{0.0f};
+	float _z3_max_env{0.0f};
+	float _z3_min_env{0.0f};
+	float _z3_filt{0.0f};
 
 	/* internal states */
 	float _v1{0.0f};
