@@ -5,6 +5,18 @@
 [![PX4 v1.15.4](https://img.shields.io/badge/PX4-v1.15.4-blue.svg)](https://github.com/PX4/PX4-Autopilot/tree/v1.15.4)
 [![License](https://img.shields.io/badge/license-BSD--3-green.svg)](LICENSE)
 
+## 版本
+
+| 标签 | 说明 |
+|---|---|
+| [`adrc-v1.0`](https://github.com/yaoyaoqiaoku/PX4_ADRC/tree/adrc-v1.0) | 基础版：LADRC + 增广 ESO + 分配器反馈 + γ 补偿 |
+| [`adrc-v2.0`](https://github.com/yaoyaoqiaoku/PX4_ADRC/tree/adrc-v2.0) | **推荐**：v1.0 + lambda_z3 + dt_eso 保护 + motor_tau 精确离散化 + AF 自适应滤波 + keep-last-valid 模式校验 + landed-only 重置 |
+
+```bash
+git checkout adrc-v1.0   # 切到旧版
+git checkout adrc-v2.0   # 切到新版（推荐）
+```
+
 ## 项目概述
 
 用 ADRC（Active Disturbance Rejection Control）替换 PX4 原版 PID 角速率控制器 `mc_rate_control`，保留接口不变，只换控制律。
@@ -14,7 +26,8 @@
 **验证状态**：
 - ✅ SITL（Gazebo Classic / gz-sim）通过
 - ✅ 真机验证：PX4_FMU_V6C / 66cm 轴距 / 3.5kg / U3515 电机 / 14 寸桨 / 6S
-- ✅ 悬停平滑度与 PID 相当（RMS 7~11°/s vs PID 7~13°/s）
+- ✅ 26 轮真机扫参验证，推荐参数 Roll 5.4°/s、Pitch 5.0°/s（达到 PID 优秀水平）
+- ✅ CW 扫参：CW=10 是机架天花板，CW=12~15 平静期振动 3.9~4.4°/s（与 CW=10 的 3.1°/s 肉眼不可分辨）
 - ⏳ 抗扰对比测试（风场/挂载变化）待完成
 
 ## 目录结构
@@ -26,7 +39,7 @@ PX4_ADRC/
 │   ├── Adrc.cpp                         # 算法实现（LADRC + 增广 ESO + 饱和建模）
 │   ├── AdrcRateControl.hpp              # PX4 模块声明
 │   ├── AdrcRateControl.cpp              # PX4 模块实现（订阅/发布/调度/安全逻辑）
-│   ├── adrc_params.c                    # 74 个参数定义
+│   ├── adrc_params.c                    # 91 个参数定义
 │   ├── CMakeLists.txt                   # 构建接入
 │   └── Kconfig                          # 模块开关
 ├── msg/
@@ -207,7 +220,7 @@ make micoair_h743-v2_default
 
 ## 参数速查表
 
-共 74 个参数，按功能分组：
+共 91 个参数，按功能分组：
 
 ### 模式切换
 
@@ -238,6 +251,8 @@ make micoair_h743-v2_default
 | `ADRC_*_KI` | 积分增益 | 0 | 0~0.3 | 消除静差，带抗饱和 |
 | `ADRC_*_RAMP` | 输出限速 (1/s) | 0 | 0~20 | 防阶跃激励柔性模态 |
 | `ADRC_*_SPS` | 设定值平滑 (Hz) | 0 | 0~10 | 打杆就晃时开 |
+| `ADRC_*_LZ3` | z3 漏积分衰减率 | 0 | 2 | 防 z3 慢漂，Yaw 建议 0（保留常值扰动） |
+| `ADRC_*_AF` | 自适应滤波阈值 (rad/s²) | 0 | 0~8 | 包络自适应低通，阈值需 >z3 正常波动幅度 |
 
 ### 非线性 ESO 参数（模式 0 用）
 
@@ -279,21 +294,21 @@ make micoair_h743-v2_default
 ### 真机起点参数（66cm/3.5kg/14 寸桨/6S）
 
 ```bash
-# 核心
-param set ADRC_ROLL_CW 8
-param set ADRC_PITCH_CW 8
+# 核心（v2.0 推荐参数，26 轮真机扫参验证）
+param set ADRC_ROLL_CW 10
+param set ADRC_PITCH_CW 10
 param set ADRC_YAW_CW 5
-param set ADRC_ROLL_ESO_W 30
-param set ADRC_PITCH_ESO_W 30
+param set ADRC_ROLL_ESO_W 40
+param set ADRC_PITCH_ESO_W 40
 param set ADRC_YAW_ESO_W 15
-param set ADRC_ROLL_B0 100      # 按机架标定，66cm 框架实测 ~90
+param set ADRC_ROLL_B0 100
 param set ADRC_PITCH_B0 100
-param set ADRC_YAW_B0 8
+param set ADRC_YAW_B0 20
 
 # 硬化
-param set ADRC_ROLL_TAU 0.03
-param set ADRC_PITCH_TAU 0.03
-param set ADRC_YAW_TAU 0.015
+param set ADRC_ROLL_TAU 0.035
+param set ADRC_PITCH_TAU 0.035
+param set ADRC_YAW_TAU 0.01
 param set ADRC_ROLL_GAMMA 0.7
 param set ADRC_PITCH_GAMMA 0.7
 param set ADRC_YAW_GAMMA 0.6
@@ -301,31 +316,43 @@ param set ADRC_ROLL_FLT 30
 param set ADRC_PITCH_FLT 30
 param set ADRC_YAW_FLT 20
 
-# 姿态环（减少对内环的需求）
+# v2.0 新增
+param set ADRC_ROLL_LZ3 2
+param set ADRC_PITCH_LZ3 2
+param set ADRC_YAW_LZ3 0        # Yaw 不开漏积分（保留常值扰动补偿）
+param set ADRC_ROLL_AF 0         # AF 关闭（阈值过低反而有害）
+param set ADRC_PITCH_AF 0
+param set ADRC_YAW_AF 0
+
+# 姿态环
 param set MC_ROLL_P 4.5
 param set MC_PITCH_P 4.5
 param set MC_YAW_P 4.0
-param set MC_AIRMODE 1
+param set MC_AIRMODE 0
 
 param save
 ```
 
+### QGC 一键导入
+
+仓库根目录 `params/adrc_params_recommended.params` 可在 QGC 中直接导入（设置 → 参数 → 工具 → Load from file）。
+
 ### 调参流程
 
 ```
-起点（CW 8, ESO_W 30, TAU 0.03, γ 0.7, FLT 30, b0 100, P_att 4.5）
+起点（CW 10, ESO_W 40, TAU 0.035, γ 0.7, FLT 30, LZ3 2, AF 0, b0 100, P_att 4.5）
   │
   ├─ 悬停 30s ──→ 稳定？
   │     │              │
   │     │ 否           │ 是
   │     ▼              ▼
-  │  1~2Hz 慢摇     CW → 10 → 12
+  │  1~2Hz 慢摇     CW → 11 → 12（注意 CW=12~13 可能踩 Roll 共振带）
   │     │              │
   │     ▼              ▼
   │  ↑CW / ↓P_att   3Hz 振动？
   │                    │
   │                    ▼
-  │              ↓γ (0.7→0.6) / ↑TAU (0.03→0.035)
+  │              ↓γ (0.7→0.6) / ↑TAU (0.035→0.04)
   │                    │
   │                    ▼
   │              b0 标定（calibrate_b0_v2.py）
@@ -336,7 +363,7 @@ param save
   ├─ 2~4Hz 高频抖
   │     │
   │     ▼
-  │  ↑TAU (0.02→0.03→0.035)
+  │  ↑TAU (0.03→0.035→0.04)
   │  ↓γ (0.7→0.6)
   │  不要 ↓CW
   │
@@ -443,6 +470,33 @@ python3 docs/calibrate_b0_v2.py <your_log.ulg> --b0-used 100 100 8
 2. **悬停 b0 标定精度**：悬停数据激励不足，所有闭环辨识方法都有较大不确定性（±30%）。精确标定需 Acro 模式力矩阶跃测试。
 3. **低频 Notch 风险**：`ADRC_*_NF` 在临界工况的相位滞后可能比谐振本身更危险，仅作最后手段。
 4. **电池缩放**：若启用 `MC_BAT_SCALE_EN`，ESO 输入与实际扭矩存在缩放偏差（当前未处理）。
+5. **CW 上限**：66cm/14寸桨机架 CW=12~13 可能触发 Roll 轴结构共振带（平静期 z1 从 3°/s 跳到 4°/s，肉眼不可见但数据可测），CW=10 是该机架的保守上限。
+6. **AF 阈值**：AF 的包络阈值需高于 z3 正常波动幅度（该机架约 10~15 rad/s²），AF=8 过低会导致持续重滤波、延迟补偿，反而恶化振动。建议关闭（AF=0）。
+
+## 更新日志
+
+### v2.0（2026-08-21）
+
+**新增功能**：
+- `ADRC_*_LZ3`：z3 漏积分衰减率，防陀螺零偏导致 z3 慢漂（Yaw 轴建议关闭）
+- `ADRC_*_AF`：自适应扰动滤波，包络跟踪 + 立方带宽衰减（阈值需匹配 z3 波动幅度）
+- dt_eso 稳定性保护：线性 ESO 用 `min(h, 1/ωo)`，非线性 ESO 用 `min(h, 2/max_gain)`
+- motor_tau 精确离散化：`alpha = 1 - exp(-h/tau)`（ZOH，无条件稳定）
+- NaN 防护：`update()` 入口 PX4_ISFINITE 三连检
+- z3_filt 防御性钳位：滤波后 z3 不超过物理极限
+- keep-last-valid 模式校验：非法 ADRC_ESO_MODE/CTRL_LAW 保持上一有效模式 + 警告
+- 合法模式切换自动重置三轴状态（z1 以当前速率播种）
+- resetIntegral() 清空完善（z3/z2/u_eso/z3_filt，防起飞跳变）
+
+**改进**：
+- landed-only 重置：移除 maybe_landed（防飞行中误判清零导致扰动补偿丢失）
+- 推荐参数更新：CW=10, ESO_W=40, TAU=0.035（基于 26 轮真机扫参验证）
+
+### v1.0（初始版本）
+
+- 基础 LADRC + 增广 ESO + 分配器饱和反馈 + γ 部分补偿
+- 全套硬化：FLT/NF/NBW/SPS/RAMP/KI/ILIM/Z3MAX
+- 74 个参数，per-axis 独立
 
 ## 参考资料
 
